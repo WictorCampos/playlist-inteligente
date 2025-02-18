@@ -44,20 +44,23 @@ def recommend_music(
         extra_tracks = search_songs_by_criteria(
             mood, genres, artists, countries, limit - len(tracks)
         )
-        tracks.extend(
-            extra_tracks
-        )  # 🔄 Adiciona músicas do Spotify para completar a lista
+        tracks.extend(extra_tracks)
 
     if not tracks:
         return {"error": "Nenhuma música encontrada para os critérios informados."}
 
-    playlist = create_playlist(mood, tracks, title)
+    track_uris = get_track_ids_from_names(tracks)
+
+    if not track_uris:
+        return {"error": "Não foi possível encontrar IDs das músicas no Spotify."}
+
+    playlist = create_playlist(mood, track_uris, title)
 
     return {
         "mood": mood,
         "playlist": playlist,
-        "tracks_found": len(tracks),
-        "tracks": tracks,
+        "tracks_found": len(track_uris),
+        "tracks": track_uris,
     }
 
 

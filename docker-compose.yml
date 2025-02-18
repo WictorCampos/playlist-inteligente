@@ -1,0 +1,16 @@
+services:
+  playlist-ia:
+    build: .
+    container_name: playlist-inteligente
+    ports:
+      - "8000:8000"
+    environment:
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - SPOTIFY_REDIRECT_URI=${SPOTIFY_REDIRECT_URI}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./src:/app/src
+    working_dir: /app/src 
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    restart: always

@@ -1,12 +1,13 @@
-import os
-from dotenv import load_dotenv
-import random
-import time
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
 from spotipy.exceptions import SpotifyException
 from requests.exceptions import ReadTimeout, ConnectionError, HTTPError
+import os
+import time
 import requests
+import random
+import spotipy
+from dotenv import load_dotenv
+from spotipy.oauth2 import SpotifyOAuth
+from mood_analyzer import analyze_closest_genre_with_gemini
 
 load_dotenv()
 
@@ -22,48 +23,112 @@ sp = spotipy.Spotify(
     )
 )
 
+FALLBACK_GENRES = [
+    "pop", "rock", "hip-hop", "jazz", "classical", "electronic", "metal", "country",
+    "indie", "folk", "blues", "soul", "punk", "funk", "disco", "reggae", "gospel",
+    "r&b", "trap", "lofi", "house", "techno", "samba", "sertanejo", "pagode",
+    "forro", "axé", "mpb", "bossa nova", "emo", "emocore", "hardcore", "grunge",
+    "ska", "drum and bass", "dubstep", "trance", "k-pop", "j-pop", "c-pop",
+    "rap", "reggaeton", "dancehall", "mariachi", "tango", "flamenco", "blues rock",
+    "alternative", "shoegaze", "post-rock", "new wave", "synthpop", "garage rock",
+    "progressive rock", "hard rock", "heavy metal", "black metal", "death metal",
+    "power metal", "nu metal", "metalcore", "math rock", "stoner rock", "post-punk",
+    "art rock", "symphonic metal", "industrial", "opera", "ambient", "chillout",
+    "minimal", "experimental", "downtempo", "psych rock", "neo soul", "boogie",
+    "swing", "bebop", "latin", "afrobeat", "highlife", "cumbia", "bachata",
+    "zouk", "soca", "balkan", "gypsy jazz", "drone", "hyperpop", "vaporwave",
+    "phonk", "chiptune", "soundtrack", "video game music", "score", "epic",
+    "medieval", "chant", "bluegrass", "americana", "cajun", "zydeco",
+    "bolero", "tropical", "celtic", "world music", "indian classical",
+    "hindustani", "kathak", "ghazal", "qawwali", "persian", "turkish",
+    "greek", "arabic", "flamenco", "fado", "mandopop", "afrobeats", "drill",
+    "grime", "jazz fusion", "smooth jazz", "lounge", "baroque", "chamber music",
+    "musical", "christmas", "caribbean", "island", "hawaiian", "polka", "yodeling"
+]
 
 def get_user_id():
+    """ Obtém o ID do usuário autenticado no Spotify """
     user_info = sp.current_user()
     return user_info["id"]
 
 
-def search_songs_by_criteria(mood, genre=None, artist=None, country=None, limit=10):
+
+# 🔹 Função para obter um token de acesso à API do Spotify
+def get_access_token():
+    auth_url = "https://accounts.spotify.com/api/token"
+    data = {
+        "grant_type": "client_credentials",
+        "client_id": os.getenv("SPOTIFY_CLIENT_ID"),
+        "client_secret": os.getenv("SPOTIFY_CLIENT_SECRET"),
+    }
+    response = requests.post(auth_url, data=data)
+    token_info = response.json()
+    return token_info.get("access_token")
+
+
+# 🔹 Função para obter todos os gêneros disponíveis no Spotify
+def get_available_genres():
+    token = get_access_token()
+    if not token:
+        print("[ERRO] Falha ao obter token de acesso. Usando fallback de gêneros.")
+        return FALLBACK_GENRES
+
+    url = "https://api.spotify.com/v1/recommendations/available-genre-seeds"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        print(f"[ERRO] Não foi possível obter a lista de gêneros. Código {response.status_code}. Usando fallback.")
+        return FALLBACK_GENRES
+
+    genres = response.json().get("genres", [])
+    if not genres:
+        print("[ERRO] A API do Spotify não retornou gêneros. Usando fallback.")
+        return FALLBACK_GENRES
+
+    return genres
+
+
+def search_songs_by_criteria(mood, genre=None, artist=None, limit=10):
+    """
+    Busca músicas no Spotify baseadas nos critérios do usuário.
+
+    Parâmetros:
+    - mood: Humor do usuário.
+    - genre: Gênero musical desejado.
+    - artist: Artista(s) sugeridos.
+    - limit: Número de músicas a buscar.
+
+    Retorna:
+    - Lista de URIs das músicas encontradas.
+    """
     query_parts = []
 
     if genre:
         query_parts.append(f"genre:{genre}")  # 🔹 Sempre buscar por gênero
     if artist:
         query_parts.append(f"artist:{artist}")
-    if country:
-        query_parts.append(f"market:{country}")
 
     search_query = " ".join(query_parts)
 
-    print(
-        f"[DEBUG] Query para Spotify: {search_query}, buscando {limit} músicas populares"
-    )
+    print(f"[DEBUG] Query para Spotify: {search_query}, buscando {limit} músicas populares")
 
     collected_tracks = []
-    max_retries = 3  # Tenta buscar até 3 vezes se der erro
+    max_retries = 3  # Tentativas caso ocorra erro na API
 
     for attempt in range(max_retries):
         try:
             results = sp.search(q=search_query, type="track", limit=limit, offset=0)
             break  # Se a requisição deu certo, sai do loop
         except (ReadTimeout, ConnectionError, HTTPError) as e:
-            print(
-                f"[ERRO] Falha ({type(e).__name__}) na tentativa {attempt + 1}/{max_retries}. Retentando..."
-            )
+            print(f"[ERRO] Falha ({type(e).__name__}) na tentativa {attempt + 1}/{max_retries}. Retentando...")
             time.sleep(2)
         except SpotifyException as e:
             print(f"[ERRO] Erro do Spotify: {e}. Tentativa {attempt + 1}/{max_retries}")
             time.sleep(2)
 
     else:
-        print(
-            "[ERRO] Falha ao buscar músicas após várias tentativas. Retornando vazio."
-        )
+        print("[ERRO] Falha ao buscar músicas após várias tentativas. Retornando vazio.")
         return []
 
     if "tracks" not in results or not results["tracks"]["items"]:
@@ -72,18 +137,15 @@ def search_songs_by_criteria(mood, genre=None, artist=None, country=None, limit=
 
     # 🔹 Ordena por popularidade e remove duplicatas
     tracks = results["tracks"]["items"]
-    tracks = sorted(
-        tracks, key=lambda x: x["popularity"], reverse=True
-    )  # 🔥 Mantém só as mais populares
-    track_uris = list(
-        dict.fromkeys([track["uri"] for track in tracks])
-    )  # 🔄 Remove duplicatas mantendo ordem
+    tracks = sorted(tracks, key=lambda x: x["popularity"], reverse=True)  # 🔥 Prioriza músicas populares
+    track_uris = list(dict.fromkeys([track["uri"] for track in tracks]))  # 🔄 Remove duplicatas mantendo ordem
 
     # 🔹 Garante que estamos retornando no máximo `limit` músicas
     track_uris = track_uris[:limit]
 
     print(f"[DEBUG] Tracks filtradas ({len(track_uris)}): {track_uris}")
     return track_uris
+
 
 
 # def get_recommended_tracks(mood, genres=None, artists=None, countries=None, limit=10):
@@ -141,21 +203,15 @@ def search_songs_by_criteria(mood, genre=None, artist=None, country=None, limit=
 
 
 def get_track_ids_from_names(track_names):
-    """
-    Obtém os IDs do Spotify para uma lista de nomes de músicas.
-
-    Parâmetros:
-    - track_names: Lista de nomes de músicas.
-
-    Retorna:
-    - Lista de URIs do Spotify para as músicas encontradas.
-    """
     track_ids = []
     for track_name in track_names:
         try:
-            results = sp.search(q=track_name, type="track", limit=1)
+            results = sp.search(q=track_name.replace("%", " "), type="track", limit=1)
             if results["tracks"]["items"]:
-                track_ids.append(results["tracks"]["items"][0]["uri"])
+                track_uri = results["tracks"]["items"][0]["uri"]
+                track_ids.append(track_uri)
+            else:
+                print(f"[ERRO] Nenhuma música encontrada para '{track_name}'")
         except Exception as e:
             print(f"[ERRO] Falha ao buscar ID da música '{track_name}': {e}")
         time.sleep(0.5)
@@ -163,15 +219,27 @@ def get_track_ids_from_names(track_names):
     return track_ids
 
 
+
 def create_playlist(mood, tracks, title):
-    user_id = get_user_id()
+    """
+    Cria uma playlist no Spotify e adiciona as músicas encontradas.
+
+    Parâmetros:
+    - mood: O humor do usuário (usado no nome da playlist).
+    - tracks: Lista de URIs das músicas.
+    - title: Nome da playlist.
+
+    Retorna:
+    - Dicionário com nome e URL da playlist.
+    """
+    user_id = get_user_id()  # ⚠️ Certifique-se de que essa função está definida!
+
     if not tracks:
         print("[ERRO] Nenhuma música disponível para adicionar na playlist!")
         return {"error": "Nenhuma música disponível para adicionar na playlist."}
 
-    playlist_name = title
-
-    playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=True)
+    playlist = sp.user_playlist_create(user=user_id, name=title, public=True)
     sp.playlist_add_items(playlist_id=playlist["id"], items=tracks)
 
-    return {"name": playlist_name, "url": playlist["external_urls"]["spotify"]}
+    return {"name": title, "url": playlist["external_urls"]["spotify"]}
+

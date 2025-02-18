@@ -2,6 +2,7 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 import json
+import random
 
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path)
@@ -14,8 +15,8 @@ llm = ChatGoogleGenerativeAI(
 
 
 def analyze_mood_and_preferences(text, limit):
-    artistas = max(2, int(limit / 5))  # Garante pelo menos 2 artistas sugeridos
-    musicas_minimas = max(5, limit)  # Garante pelo menos 5 músicas sugeridas
+    artistas = max(2, int(limit / 5))
+    musicas_minimas = max(5, limit)
 
     prompt = f"""Você é um assistente de IA especializado em entender emoções e preferências musicais.
     Dado o seguinte texto do usuário: "{text}", identifique as seguintes informações:
@@ -102,3 +103,41 @@ def analyze_mood_title(text):
     print(f"[DEBUG] Título gerado: {title}")  # Log para depuração
 
     return title
+
+
+def analyze_closest_genre_with_gemini(user_genre, available_genres):
+    """
+    Consulta o Gemini para encontrar um gênero equivalente ao informado pelo usuário.
+
+    Parâmetros:
+    - user_genre: O gênero informado pelo usuário.
+    - available_genres: Lista de gêneros válidos do Spotify.
+
+    Retorna:
+    - O gênero mais próximo encontrado.
+    """
+
+    prompt = f"""
+    O usuário mencionou um gênero musical: "{user_genre}". No entanto, este gênero não está disponível no Spotify.
+
+    Aqui está uma lista de gêneros disponíveis no Spotify:
+    {", ".join(available_genres)}
+
+    Com base na sua experiência e conhecimento musical, qual gênero da lista acima é o mais próximo do gênero informado pelo usuário?
+
+    **Responda apenas com um dos gêneros da lista, sem explicações adicionais.**
+    """
+
+    response = llm.invoke(prompt)
+
+    if hasattr(response, "content"):
+        suggested_genre = response.content.strip()
+        if suggested_genre in available_genres:
+            print(f"[INFO] Gemini sugeriu o gênero '{suggested_genre}' como alternativa.")
+            return suggested_genre
+        else:
+            print("[ERRO] O Gemini retornou um gênero inválido. Usando uma alternativa aleatória.")
+            return random.choice(available_genres)
+    else:
+        print("[ERRO] Falha ao obter resposta do Gemini. Selecionando gênero aleatório.")
+        return random.choice(available_genres)
